@@ -34,30 +34,28 @@ class LogicRAM(object):
         self.mode = Mode
         self.depth = Depth
         self.width = Width
-        # TODO current implementation only consider lutram, m8k, m128k
-        self.N_lutram = 0
-        self.N_m8k = 0
-        self.N_m128k = 0
-        self.N_exluts = 0
-        self.map = None
+        ''''
+        pre_assign a local best config for different physical ram
+        the config is (p, s, ex_lut)
+        TODO current implementation only consider lutram, m8k, m128k
+        TODO maybe consider mixed assignment later.
+        '''
+        self.lutram = self.pre_assign(LUTRAM)
+        self.m8k = self.pre_assign(M8K)
+        self.m128k = self.pre_assign(M128K)
 
     def pre_assign(self, p_RAM):
         if self.mode not in p_RAM.mode:
             return 0, 0, 0
         # enumerate all cfgs to find best solution.
         # start from largest depth (prefer horizontal fusion)
-        p, s = 10000, 10000
-
         attempts = p_RAM.num_types if self.mode != MODE_TrueDualPort else p_RAM.num_types - 1
-        for i in range(attempts):
-            _p = (self.width - 1) // p_RAM.widths[i] + 1
-            _s = (self.depth - 1) // p_RAM.depths[i] + 1
-            if _p * _s < p * s:
-                p, s = _p, _s
-        
+        _p = (self.width - 1) // p_RAM.widths[:attempts] + 1
+        _s = (self.depth - 1) // p_RAM.depths[:attempts] + 1
+        choice = np.argmin(_p * _s) # the first min value id
+        p, s = _p[choice], _s[choice]
         ex_luts = extra_luts(s, self.width)
         return p, s, ex_luts
-
 
 def extra_luts(r, w):
     if r == 1:
@@ -74,3 +72,11 @@ def mux_size(r):
         size += (r - 1) // level + 1
         level *= 4
     return size
+
+# test
+if __name__ == '__main__':
+    ram_dict = {'RamID': 0, 'Mode': 2, 'Depth': 64, 'Width': 36}
+    ram = LogicRAM(**ram_dict)
+    print(ram.lutram)
+    print(ram.m8k)
+    print(ram.m128k)
