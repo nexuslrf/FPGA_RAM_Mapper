@@ -1,5 +1,4 @@
 from vars import *
-from parser import FPGA_cfg
 from RAM import *
 # ILP solver
 import gurobipy as gp
@@ -7,7 +6,7 @@ from gurobipy import GRB
 import sys
 
 class Circuit(object):
-    def __init__(self, num_lb, rams, circuit_id=0):
+    def __init__(self, num_lb, rams, circuit_id=0, verbose=False):
         '''
         inputs:
         num_lb: num of logic blocks
@@ -16,6 +15,8 @@ class Circuit(object):
         self.id = circuit_id
         self.N_logic_lb = num_lb
         self.ILP_optim = gp.Model('ram-mapper')
+        if not verbose:
+            self.ILP_optim.setParam('OutputFlag', 0)
         self.rams = [LogicRAM(optim=self.ILP_optim, **l_ram) for l_ram in rams]
         self.N_lutram = gp.quicksum([l_ram.N_lutram for l_ram in self.rams])
         self.N_m8k = gp.quicksum([l_ram.N_m8k for l_ram in self.rams])
@@ -83,8 +84,9 @@ class Circuit(object):
             print(cfg)
         sys.stdout = ori_stdout
             
-
+# test
 if __name__ == '__main__':
+    from parser import FPGA_cfg
     cfg = FPGA_cfg('logical_rams.txt', 'logic_block_count.txt')
     circuit = Circuit(**cfg[0])
     print(circuit.ILP_optim.ObjVal)
