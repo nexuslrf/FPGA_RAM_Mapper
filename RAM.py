@@ -73,8 +73,11 @@ class LogicRAM(object):
         attempts = p_RAM.num_types if self.mode != MODE_TrueDualPort else p_RAM.num_types - 1
         _p = (self.width - 1) // p_RAM.widths[:attempts] + 1
         _s = (self.depth - 1) // p_RAM.depths[:attempts] + 1
+        _s[_s > 16] = LARGE_NUM
         choice = np.argmin(_p * _s) # the first min value id
         p, s = _p[choice], _s[choice]
+        if s == LARGE_NUM:
+            return 0, 0, 0, 0, 0, 0
         ex_luts = extra_luts(s, self.width)
         # True dual port doubles the extra lut cost
         if self.mode == MODE_TrueDualPort: 
