@@ -14,9 +14,9 @@ class FPGA_cfg(object):
             p.split('=')[0] if '=' in p else 'type': 
             eval(p.split('=')[1]) if '=' in p else p
             for p in lb_cfg}
-        self.N_lb = lb_cfg['N'] if 'N' in lb_cfg else 10
-        self.k_lb = lb_cfg['k'] if 'k' in lb_cfg else 6
-        self.type_lb = lb_cfg['type'] if 'type' in lb_cfg else 'fracturable'
+        self.lb_size = lb_cfg['N'] if 'N' in lb_cfg else 10
+        self.lb_k = lb_cfg['k'] if 'k' in lb_cfg else 6
+        self.lb_type = lb_cfg['type'] if 'type' in lb_cfg else 'fracturable'
         # read each circuits
         self.circuits = [{'rams': []} for i in range(self.num_circuit)]
         for line in lb_cnt_reader.readlines():
@@ -42,4 +42,4 @@ class FPGA_cfg(object):
 
 if __name__ == '__main__':
     cfg = FPGA_cfg('logical_rams.txt', 'logic_block_count.txt')
-    print(cfg[2])
+    print(cfg[-1])
