@@ -1,12 +1,12 @@
 from vars import *
-from RAM import *
+from RAM import LogicRAM
 # ILP solver
 import gurobipy as gp
 from gurobipy import GRB
 import sys
 
 class Circuit(object):
-    def __init__(self, num_lb, rams, circuit_id=0, verbose=False):
+    def __init__(self, num_lb, rams, phy_rams, circuit_id=0, verbose=False):
         '''
         inputs:
         num_lb: num of logic blocks
@@ -15,33 +15,35 @@ class Circuit(object):
         self.id = circuit_id
         self.N_logic_lb = num_lb
         self.ILP_optim = gp.Model('ram-mapper')
+        self.phy_rams = phy_rams
         if not verbose:
             self.ILP_optim.setParam('OutputFlag', 0)
-        self.rams = [LogicRAM(optim=self.ILP_optim, **l_ram) for l_ram in rams]
+        self.rams = [LogicRAM(phy_rams=phy_rams, optim=self.ILP_optim, **l_ram) for l_ram in rams]
         self.N_lutram = gp.quicksum([l_ram.N_lutram for l_ram in self.rams])
-        self.N_m8k = gp.quicksum([l_ram.N_m8k for l_ram in self.rams])
-        self.N_m128k = gp.quicksum([l_ram.N_m128k for l_ram in self.rams])
+        self.N_brams = []
+        for i in range(len(phy_rams.brams)):
+            self.N_brams.append(gp.quicksum([l_ram.N_brams[i] for l_ram in self.rams]))
         self.N_exlut = gp.quicksum([l_ram.N_exlut for l_ram in self.rams])
 
         self.N_exlb = self.ILP_optim.addVar(vtype=GRB.INTEGER, name=f"n_ex_lbs")
         self.ILP_optim.addConstr(LB_SIZE * self.N_exlb >= self.N_exlut)
-        self.ILP_optim.addConstr(LB_SIZE * self.N_exlb <= self.N_exlut + M8K.interval - 1)
+        self.ILP_optim.addConstr(LB_SIZE * self.N_exlb <= self.N_exlut + LB_SIZE - 1)
 
         self.N_lb_taken = self.ILP_optim.addVar(vtype=GRB.INTEGER, name=f"n_lb_taken")
         self.ILP_optim.addConstr(self.N_lb_taken >= self.N_lutram + self.N_exlb + self.N_logic_lb)
-        self.ILP_optim.addConstr(self.N_lb_taken >= M8K.interval * self.N_m8k)
-        self.ILP_optim.addConstr(self.N_lb_taken >= M128K.interval * self.N_m128k)
+        for i in range(len(phy_rams.brams)):
+            self.ILP_optim.addConstr(self.N_lb_taken >= phy_rams[i]['interval'] * self.N_brams[i])
 
-        self.N_m8k_taken = self.ILP_optim.addVar(vtype=GRB.INTEGER, name=f"n_m8k_taken")
-        self.ILP_optim.addConstr(M8K.interval * self.N_m8k_taken <= self.N_lb_taken)
-        self.ILP_optim.addConstr(M8K.interval * self.N_m8k_taken >= self.N_lb_taken - M8K.interval + 1)
-
-        self.N_m128k_taken = self.ILP_optim.addVar(vtype=GRB.INTEGER, name=f"n_m128k_taken")
-        self.ILP_optim.addConstr(M128K.interval * self.N_m128k_taken <= self.N_lb_taken)
-        self.ILP_optim.addConstr(M128K.interval * self.N_m128k_taken >= self.N_lb_taken - M128K.interval + 1)
+        self.N_brams_taken = []
+        for i in range(len(phy_rams.brams)):
+            N_bram_i_taken = self.ILP_optim.addVar(vtype=GRB.INTEGER, name=f"n_bram_{i}_taken")
+            self.ILP_optim.addConstr(phy_rams[i]['interval'] * N_bram_i_taken <= self.N_lb_taken)
+            self.ILP_optim.addConstr(phy_rams[i]['interval'] * N_bram_i_taken >= self.N_lb_taken - phy_rams[i]['interval'] + 1)
+            self.N_brams_taken.append(N_bram_i_taken)
 
         self.ILP_optim.setObjective(
-            AREA_LB * self.N_lb_taken + AREA_M8K * self.N_m8k_taken + AREA_M128K * self.N_m128k_taken, 
+            phy_rams.lb_area * self.N_lb_taken + \
+                gp.quicksum([phy_rams[i]['area'] * self.N_brams_taken[i] for i in range(len(phy_rams.brams))]),
             GRB.MINIMIZE)
 
         self.ILP_optim.optimize()
@@ -51,21 +53,21 @@ class Circuit(object):
             self.ILP_optim.write("model.ilp")
 
     def get_area(self):
-        N_lutram, N_m8k, N_m128k, N_exlut = 0, 0, 0, 0
+        N_lutram, N_exlut = 0, 0
+        N_brams = [0 for i in self.phy_rams.brams]
         for l_ram in self.rams:
-            p_ram, p_cfg = l_ram.get_final_cfg()
-            if p_ram is LUTRAM:
+            p_ram_id, p_cfg = l_ram.get_final_cfg()
+            if p_ram_id == len(self.phy_rams.brams):
                 N_lutram += p_cfg[-1]
-            elif p_ram is M8K:
-                N_m8k += p_cfg[-1]
-            elif p_ram is M128K:
-                N_m128k += p_cfg[-1]
+            else:
+                N_brams[p_ram_id] += p_cfg[-1]
             N_exlut += p_cfg[-2]
         N_lb_taken = max(N_exlut//LB_SIZE + N_lutram + self.N_logic_lb, 
-            M8K.interval * N_m8k, M128K.interval * N_m128k)
+            *[self.phy_rams[i]['interval'] * N_brams[i] for i in range(len(N_brams))])
         # print(N_lutram, N_m8k, N_m128k, N_exlut, N_lb_taken)
-        return N_lb_taken * AREA_LB + N_lb_taken//M8K.interval * AREA_M8K + \
-                    N_lb_taken//M128K.interval * AREA_M128K
+        return N_lb_taken * self.phy_rams.lb_area + \
+            sum([N_lb_taken//self.phy_rams[i]['interval'] * self.phy_rams[i]['area']
+                for i in range(len(N_brams))])
 
     def gen_cfg(self, file_in=None):
         '''
@@ -76,19 +78,21 @@ class Circuit(object):
         if file_in: sys.stdout = file_in
         m_id = 0
         for l_ram in self.rams:
-            p_ram, (p, s, w, d, exlut, _) = l_ram.get_final_cfg()
+            p_ram_id, (p, s, w, d, exlut, _) = l_ram.get_final_cfg()
             cfg = f"{self.id} {l_ram.id} {exlut} LW {l_ram.width} LD {l_ram.depth} " + \
-                f"ID {m_id} S {s} P {p} Type {p_ram.type} Mode {MODE_List[l_ram.mode]} " + \
-                f"W {w} D {d}"
+                f"ID {m_id} S {s} P {p} Type {self.phy_rams[p_ram_id]['id']} " + \
+                f"Mode {MODE_List[l_ram.mode]} W {w} D {d}"
+
             m_id += 1
             print(cfg)
         sys.stdout = ori_stdout
             
 # test
 if __name__ == '__main__':
-    from parser import FPGA_cfg
+    from parser import FPGA_cfg, PhyRAM_cfg
     cfg = FPGA_cfg('logical_rams.txt', 'logic_block_count.txt')
-    circuit = Circuit(**cfg[0])
+    p_rams = PhyRAM_cfg('physical_rams.yaml')
+    circuit = Circuit(phy_rams=p_rams, **cfg[0])
     print(circuit.ILP_optim.ObjVal)
     print(circuit.get_area())
     f = open('mapping.txt', 'w')

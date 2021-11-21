@@ -1,0 +1,4 @@
+tqdm
+numpy
+gurobipy==9.5.0
+PyYAML==6.0

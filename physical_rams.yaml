@@ -1,0 +1,22 @@
+- RAM: LUTRAM
+  type: LUTRAM
+  # BRAM by default support these three modes, so you can omit this mode line
+  mode: [ROM, SinglePort, SimpleDualPort]
+  bits: 640
+  widths: [10, 20] # in increasing order
+  interval: 1 # it can be a decimal
+
+- RAM: M8K
+  type: BRAM
+  mode: [ROM, SinglePort, SimpleDualPort, TrueDualPort]
+  bits: 8192
+  widths: [1, 2, 4, 8, 16, 32]
+  interval: 10
+
+- RAM: M128K
+  type: BRAM
+  # BRAM by default support these four modes, so you can omit this line
+  # mode: [ROM, SinglePort, SimpleDualPort, TrueDualPort] 
+  bits: 131072
+  widths: 128 # that will be automatically converted to [128, 64, ..., 1]
+  interval: 300

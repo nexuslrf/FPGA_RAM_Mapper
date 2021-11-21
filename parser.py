@@ -1,4 +1,8 @@
+from pickle import NONE
+from typing import List
 from vars import *
+import yaml
+import numpy as np
 
 class FPGA_cfg(object):
     def __init__(self, ram_cfg_path, lb_cnt_path):
@@ -40,6 +44,73 @@ class FPGA_cfg(object):
     def __getitem__(self, index):
         return self.circuits[index]
 
+class PhyRAM_cfg(object):
+    def __init__(self, ram_cfg_path='', rams=[]):
+        # there is only one type of lutram but multi types of bram
+        self.lutram = None 
+        self.brams = []
+        p_ram_id = 1
+        if ram_cfg_path != '':
+            f = open(ram_cfg_path).read()
+            cfg = yaml.load(f, Loader=yaml.FullLoader)
+            for c in cfg:
+                p_ram = complete_RAM_cfg(id=p_ram_id, **c)
+                if p_ram['type'] == 'LUTRAM':
+                    self.lutram = p_ram
+                else:
+                    self.brams.append(p_ram)
+                p_ram_id += 1
+        for r in rams:
+            p_ram = complete_RAM_cfg(*[eval(v) for v in r],        
+                        type='LUTRAM' if len(r) == 1 else 'BRAM',
+                        id=p_ram_id)
+            if p_ram['type'] == 'LUTRAM':
+                self.lutram = p_ram # cmd line can overload cfg file
+            else:
+                self.brams.append(p_ram)
+            p_ram_id += 1
+        
+        self.lb_area = AREA_LB_NO_RAM if self.lutram is None else \
+            (AREA_LB_NO_RAM * self.lutram['interval'] + AREA_LB_RAM) / (self.lutram['interval']+1)
+
+    def __len__(self):
+        n = len(self.brams)
+        return n + 1 if self.lutram is not None else n
+    
+    def __getitem__(self, index):
+        if index < len(self.brams):
+            return self.brams[index]
+        else:
+            return self.lutram
+
+def complete_RAM_cfg(bits, widths=[10, 20], interval=1, type='LUTRAM', 
+                mode=None, RAM='', id=0):
+    cfg = {}
+    cfg['type'] = type
+    cfg['bits'] = bits
+    cfg['name'] = RAM
+    cfg['id'] = id
+    cfg['interval'] = interval
+    if mode is None:
+        cfg['mode'] = ['ROM', 'SinglePort', 'SimpleDualPort']
+        if cfg['type'] == 'BRAM': cfg['mode'].append('TrueDualPort')
+    else:
+        cfg['mode'] = mode
+    cfg['mode'] = [MODE_Map[m] for m in cfg['mode']]
+
+    if not isinstance(widths, list):
+        widths = [1<<i for i in range(int(np.log2(widths))+1)]
+    cfg['widths'] = np.array(widths)
+    cfg['depths'] = np.array([cfg['bits']//w for w in cfg['widths']])
+    cfg['num_cfg'] = len(cfg['widths'])
+    cfg['area'] = bram_area(cfg['bits'], cfg['widths'][-1]) if cfg['type'] == 'BRAM' \
+        else AREA_LB_RAM
+    cfg['area'] = round(cfg['area'])
+    return cfg
+
 if __name__ == '__main__':
-    cfg = FPGA_cfg('logical_rams.txt', 'logic_block_count.txt')
-    print(cfg[-1])
+    fpga_cfg = FPGA_cfg('logical_rams.txt', 'logic_block_count.txt')
+    print(fpga_cfg[-1])
+    ram_cfg = PhyRAM_cfg('physical_rams.yaml')
+    print(ram_cfg.lutram)
+    print(ram_cfg.brams)

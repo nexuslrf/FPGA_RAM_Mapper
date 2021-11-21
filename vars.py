@@ -13,6 +13,8 @@ MODE_List = ['ROM', 'SinglePort', 'SimpleDualPort', 'TrueDualPort']
 
 bram_area = lambda bits, max_width: 9000 + 5 * bits + 90 * bits**0.5 + 600 * 2 * max_width
 
+AREA_LB_NO_RAM = 35000
+AREA_LB_RAM =    40000
 AREA_LB = 37500 # (35000 + 40000)/2
 AREA_M8K = 96506 # bram_area(8192, 32)
 AREA_M128K = 850544 # bram_area(1024*128, 128)
