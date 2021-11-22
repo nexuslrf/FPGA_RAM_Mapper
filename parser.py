@@ -61,7 +61,8 @@ class PhyRAM_cfg(object):
                     self.brams.append(p_ram)
                 p_ram_id += 1
         for r in rams:
-            p_ram = complete_RAM_cfg(*[eval(v) for v in r],        
+            p_ram = complete_RAM_cfg(*[eval(v) for v in r[:-1]],
+                        interval=eval(r[-1]),        
                         type='LUTRAM' if len(r) == 1 else 'BRAM',
                         id=p_ram_id)
             if p_ram['type'] == 'LUTRAM':
@@ -83,7 +84,7 @@ class PhyRAM_cfg(object):
         else:
             return self.lutram
 
-def complete_RAM_cfg(bits, widths=[10, 20], interval=1, type='LUTRAM', 
+def complete_RAM_cfg(bits=640, widths=[10, 20], interval=1, type='LUTRAM', 
                 mode=None, RAM='', id=0):
     cfg = {}
     cfg['type'] = type

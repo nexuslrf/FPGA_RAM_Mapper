@@ -16,7 +16,7 @@ p.add_argument('--phy_ram', action='append', nargs='+', help='''
             to cfg LUTRAM: --phy_ram [interval]
             to cfg BRAM: --phy_ram [bits] [max_width] [interval]
         ''')
-p.add_argument('--phy_ram_cfg_path', type=str, default='physical_rams.yaml')
+p.add_argument('--phy_ram_cfg_path', type=str, default='')
 args = p.parse_args()
 if args.phy_ram is None:
     args.phy_ram = []
