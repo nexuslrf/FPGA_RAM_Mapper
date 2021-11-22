@@ -18,6 +18,7 @@ p.add_argument('--phy_ram', action='append', nargs='+', help='''
             to cfg BRAM: --phy_ram [bits] [max_width] [interval]
         ''')
 p.add_argument('--phy_ram_cfg_path', type=str, default='')
+p.add_argument('--enable_mix', action='store_true', default=False)
 args = p.parse_args()
 if args.phy_ram is None:
     args.phy_ram = []
@@ -31,7 +32,8 @@ if __name__ == '__main__':
     areas = []
     for i in tqdm(range(len(fpga_cfg))):
         mapping_file.write(f'/////////////////// Circuit: {i:03d} /////////////////////\n')
-        circuit = Circuit(circuit_id=i, phy_rams=phy_rams, verbose=args.verbose, **fpga_cfg[i])
+        circuit = Circuit(circuit_id=i, phy_rams=phy_rams, mix=args.enable_mix, 
+                            verbose=args.verbose, **fpga_cfg[i])
         circuit.gen_cfg(mapping_file)
         areas.append(circuit.ILP_optim.objVal) # areas.append(circuit.get_area()) 
     

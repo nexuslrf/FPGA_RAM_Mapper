@@ -3,98 +3,6 @@ import numpy as np
 import gurobipy as gp
 from gurobipy import GRB
 
-# class PhyisicalRAM(object):
-#     pass
-
-# class LUTRAM(PhyisicalRAM):
-#     mode = [MODE_ROM, MODE_SinglePort, MODE_SimpleDualPort]
-#     type = 1
-#     bits = 640
-#     num_types = 2
-#     depths = np.array([64, 32])
-#     widths = np.array([10, 20])
-#     interval = 1
-
-# class M8K(PhyisicalRAM):
-#     mode = [MODE_ROM, MODE_SinglePort, MODE_SimpleDualPort, MODE_TrueDualPort]
-#     type = 2
-#     bits = 8192
-#     num_types = 6
-#     depths = np.array([8192, 4096, 2048, 1024, 512, 256])
-#     widths = np.array([1, 2, 4, 8, 16, 32])
-#     interval = 10
-
-# class M128K(PhyisicalRAM):
-#     mode = [MODE_ROM, MODE_SinglePort, MODE_SimpleDualPort, MODE_TrueDualPort]
-#     type = 3
-#     bits = 131072
-#     num_types = 8
-#     depths = np.array([131072, 65536, 32768, 16384, 8192, 4096, 2048, 1024])
-#     widths = np.array([1, 2, 4, 8, 16, 32, 64, 128])
-#     interval = 300
-            
-
-class LogicRAM(object):
-    def __init__(self, RamID, Mode, Depth, Width, phy_rams, optim=None):
-        self.id = RamID
-        self.mode = Mode
-        self.depth = Depth
-        self.width = Width
-        self.lutram_idx = len(phy_rams.brams)
-        ''''
-        pre_assign a local best config for different physical ram
-        the config is (p, s, w, d, ex_lut, size)
-        TODO you can also perform some local pruning to simplify optimization
-        TODO maybe consider mixed assignment later.
-        '''
-        self.lutram = self.pre_assign(phy_rams.lutram)
-        self.brams = []
-        for bram in phy_rams.brams:
-            self.brams.append(self.pre_assign(bram))
-
-        self.I_lutram = 0
-        self.I_brams = [0 for i in self.brams]
-
-        if optim is not None:
-            # setting optimization variable
-            self.I_lutram = optim.addVar(vtype=GRB.BINARY) if self.lutram[-1] else 0
-            for i in range(len(self.brams)):
-                self.I_brams[i] = optim.addVar(vtype=GRB.BINARY) if self.brams[i][-1] else 0
-            # add constraints
-            optim.addConstr(self.I_lutram + gp.quicksum(self.I_brams) == 1)
-            self.N_exlut = self.I_lutram * self.lutram[-2] + \
-                gp.quicksum([self.I_brams[i] * self.brams[i][-2] for i in range(len(self.brams))])
-            self.N_lutram = self.I_lutram * self.lutram[-1]
-            self.N_brams = [self.I_brams[i] * self.brams[i][-1] for i in range(len(self.brams))]
-
-    def pre_assign(self, p_RAM):
-        if p_RAM is None or self.mode not in p_RAM['mode']:
-            return 0, 0, 0, 0, 0, 0
-        # enumerate all cfgs to find best solution.
-        # start from largest depth (prefer horizontal fusion)
-        attempts = p_RAM['num_cfg'] if self.mode != MODE_TrueDualPort else p_RAM['num_cfg'] - 1
-        _p = (self.width - 1) // p_RAM['widths'][:attempts] + 1
-        _s = (self.depth - 1) // p_RAM['depths'][:attempts] + 1
-        _s[_s > 16] = LARGE_NUM
-        choice = np.argmin(_p * _s) # the first min value id
-        p, s = _p[choice], _s[choice]
-        if s == LARGE_NUM:
-            return 0, 0, 0, 0, 0, 0
-        ex_luts = extra_luts(s, self.width)
-        # True dual port doubles the extra lut cost
-        if self.mode == MODE_TrueDualPort: 
-            ex_luts *= 2
-        return p, s, p_RAM['widths'][choice], p_RAM['depths'][choice], ex_luts, p*s
-
-    def get_final_cfg(self):
-        if self.I_lutram and self.I_lutram.x == 1:
-            return self.lutram_idx, self.lutram
-        for i in range(len(self.brams)):
-            if self.I_brams[i] and self.I_brams[i].x == 1:
-                return i, self.brams[i]
-        else:
-            return None, None
-
 def extra_luts(r, w):
     if r == 1:
         return 0
@@ -111,10 +19,184 @@ def mux_size(r):
         level *= 4
     return size
 
+class LogicRAM(object):
+    def __init__(self, RamID, Mode, Depth, Width, phy_rams, optim=None, mix=False):
+        self.id = RamID
+        self.mode = Mode
+        self.depth = Depth
+        self.width = Width
+        self.lutram_idx = len(phy_rams.brams)
+        self.mix = mix
+        ''''
+        pre_assign a local best config for different physical ram
+        the config is 
+            (p, s, w, d, ex_lut, size)
+        TODO you can also perform some local pruning to simplify search
+        TODO maybe consider mixed assignment later.
+        '''
+        self.lutram = self.pre_assign(phy_rams.lutram)
+        self.brams = []
+        for bram in phy_rams.brams:
+            self.brams.append(self.pre_assign(bram))
+        if self.mix:
+            self.ram_mix = self.get_ram_mix(phy_rams)
+            if self.ram_mix is None:
+                self.mix = False
+
+        self.I_lutram = 0
+        self.I_brams = [0 for i in self.brams]
+
+        if optim is not None:
+            # setting optimization variable
+            self.I_lutram = optim.addVar(vtype=GRB.BINARY) if self.lutram[-1] else 0
+            for i in range(len(self.brams)):
+                self.I_brams[i] = optim.addVar(vtype=GRB.BINARY) if self.brams[i][-1] else 0
+            # add constraints
+            
+            self.N_exlut = self.I_lutram * self.lutram[-2] + \
+                gp.quicksum([self.I_brams[i] * self.brams[i][-2] for i in range(len(self.brams))])
+            self.N_lutram = self.I_lutram * self.lutram[-1]
+            self.N_brams = [self.I_brams[i] * self.brams[i][-1] for i in range(len(self.brams))]
+            if self.mix:
+                self.I_mix = optim.addVar(vtype=GRB.BINARY)
+                self.N_exlut = self.N_exlut + self.I_mix * self.ram_mix['ex_lut']
+                base_id = self.ram_mix['base_id']
+                self.N_brams[base_id] = self.N_brams[base_id] + self.I_mix * self.ram_mix['base'][-1]
+                for m in ['series', 'parallel']:
+                    if self.ram_mix[m] is None: continue
+                    m_id = self.ram_mix[m][0]
+                    if m_id < len(self.brams):
+                        self.N_brams[m_id] = self.N_brams[m_id] + self.I_mix * self.ram_mix[m][-1]
+                    else:
+                        self.N_lutram = self.N_lutram + self.I_mix * self.ram_mix[m][-1]
+
+                optim.addConstr(self.I_lutram + self.I_mix + gp.quicksum(self.I_brams) == 1)
+            else:
+                optim.addConstr(self.I_lutram + gp.quicksum(self.I_brams) == 1)
+
+    def pre_assign(self, p_RAM, width=None, depth=None):
+        if p_RAM is None or self.mode not in p_RAM['mode']:
+            return 0, 0, 0, 0, 0, 0
+        width = self.width if width is None else width
+        depth = self.depth if depth is None else depth
+        # enumerate all cfgs to find best solution.
+        # start from largest depth (prefer horizontal fusion)
+        attempts = p_RAM['num_cfg'] if self.mode != MODE_TrueDualPort else p_RAM['num_cfg'] - 1
+        _p = (width - 1) // p_RAM['widths'][:attempts] + 1
+        _s = (depth - 1) // p_RAM['depths'][:attempts] + 1
+        _s[_s > 16] = LARGE_NUM
+        choice = np.argmin(_p * _s) # the first min value id
+        p, s = _p[choice], _s[choice]
+        if s == LARGE_NUM:
+            return 0, 0, 0, 0, 0, 0
+        ex_luts = extra_luts(s, width)
+        # True dual port doubles the extra lut cost
+        if self.mode == MODE_TrueDualPort: 
+            ex_luts *= 2
+        return p, s, p_RAM['widths'][choice], p_RAM['depths'][choice], ex_luts, p*s
+
+    def get_final_cfg(self):
+        if self.I_lutram and self.I_lutram.x == 1:
+            return self.lutram_idx, self.lutram
+        for i in range(len(self.brams)):
+            if self.I_brams[i] and self.I_brams[i].x == 1:
+                return i, self.brams[i]
+        if self.mix and self.I_mix.x == 1:
+            return -1, self.ram_mix
+        else:
+            return None, None
+
+
+    def get_ram_mix(self, p_RAMs):
+        """
+        mix mode requires p_RAM bits are in a decreasing order.
+        TODO
+        """
+        best_area = np.inf
+        series = None
+        parallel = None
+        new_ex_lut = 0
+        base_ram_id = None
+        base_ram = None
+        for i in range(len(self.brams)-1, -1 ,-1):
+            p, s, w, d, ex_lut, size = self.brams[i]
+            series_ex_lut = 0
+            parallel_ex_lut = 0
+            d_last_row = 0
+            mix_row = False
+            mix_col = False
+            base_area = size * p_RAMs[i]['area']
+            _series = None
+            _parallel = None
+            _best_area = base_area
+            if s > 1:
+                d_last_row = self.depth % d
+                if d_last_row / d < 0.8:
+                    base_area = base_area -1 * p * p_RAMs[i]['area']
+                    for j in range(i, -1, -1):
+                        _p, _s, _w, _d, _ex_lut, _size = self.pre_assign(p_RAMs[j], self.width, d_last_row)
+                        area = base_area + _size * p_RAMs[j]['area']
+                        if _size > 0 and area < _best_area:
+                            mix_row = True
+                            _best_area = area
+                            _series = (j, _p, _s, _w, _d, self.width, d_last_row, _p * _s)
+                            series_ex_lut = _ex_lut
+                    if p_RAMs.lutram is not None:
+                        _p, _s, _w, _d, _ex_lut, _size = self.pre_assign(p_RAMs.lutram, self.width, d_last_row)
+                        area = base_area + _size * p_RAMs.lutram['area']
+                        if _size > 0 and area < _best_area:
+                            mix_row = True
+                            _best_area = area
+                            _series = (len(p_RAMs.brams), _p, _s, _w, _d, self.width, d_last_row, _p * _s)
+                            series_ex_lut = _ex_lut
+            if p > 1:
+                w_last_col = self.width % w
+                if w_last_col / w < 0.8:
+                    base_area = base_area - (s-int(mix_row)) * p_RAMs[i]['area']
+                    d_parallel = self.depth - d_last_row if mix_row else self.depth
+                    for j in range(i, -1, -1):
+                        _p, _s, _w, _d, _ex_lut, _size = self.pre_assign(p_RAMs[j], w_last_col, d_parallel)
+                        area = base_area + _size * p_RAMs[j]['area']
+                        if _size > 0 and area < _best_area:
+                            mix_col = True
+                            _best_area = area
+                            _parallel = (j, _p, _s, _w, _d, w_last_col, d_parallel, _p * _s)
+                            parallel_ex_lut = _ex_lut
+                    if p_RAMs.lutram is not None:
+                        _p, _s, _w, _d, _ex_lut, _size = self.pre_assign(p_RAMs.lutram, w_last_col, d_parallel)
+                        area = (s-1) * p * p_RAMs[i]['area'] + _size * p_RAMs.lutram['area']
+                        if _size > 0 and area < _best_area:
+                            mix_col = True
+                            _best_area = area
+                            _parallel = (len(p_RAMs.brams), _p, _s, _w, _d, w_last_col, d_parallel, _p * _s)
+                            parallel_ex_lut = _ex_lut
+                        
+            if _best_area < best_area:
+                best_area = _best_area
+                series = _series
+                parallel = _parallel
+                new_ex_lut = ex_lut + parallel_ex_lut + series_ex_lut
+                base_ram_id = i
+                base_ram = (base_ram_id, p-int(mix_col), s-int(mix_row), w, d, 
+                        self.width - _parallel[-3] if mix_col else self.width,
+                        self.depth - _series[-2] if mix_row else self.depth,
+                        (p-int(mix_col))* (s-int(mix_row)))
+        if series is None and parallel is None:
+            return None
+        else:
+            return {
+                'base_id': base_ram_id,
+                'base': base_ram,
+                'ex_lut': new_ex_lut,
+                'series': series,
+                'parallel': parallel
+            }
+
 # test
 if __name__ == '__main__':
-    ram_dict = {'RamID': 0, 'Mode': 2, 'Depth': 64, 'Width': 36}
-    ram = LogicRAM(**ram_dict)
-    print(ram.lutram)
-    print(ram.m8k)
-    print(ram.m128k)
+    ram_dict = {'RamID': 0, 'Mode': 2, 'Depth': 1025, 'Width': 129}
+    from parser import FPGA_cfg, PhyRAM_cfg
+    ram_cfg = PhyRAM_cfg('physical_rams.yaml')
+    ram = LogicRAM(phy_rams=ram_cfg, **ram_dict)
+    print(ram.brams)
+    print(ram.get_ram_mix(ram_cfg))

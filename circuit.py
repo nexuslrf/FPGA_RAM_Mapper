@@ -6,7 +6,7 @@ from gurobipy import GRB
 import sys
 
 class Circuit(object):
-    def __init__(self, num_lb, rams, phy_rams, circuit_id=0, verbose=False):
+    def __init__(self, num_lb, rams, phy_rams, circuit_id=0, mix=False, verbose=False):
         '''
         inputs:
         num_lb: num of logic blocks
@@ -18,7 +18,7 @@ class Circuit(object):
         self.phy_rams = phy_rams
         if not verbose:
             self.ILP_optim.setParam('OutputFlag', 0)
-        self.rams = [LogicRAM(phy_rams=phy_rams, optim=self.ILP_optim, **l_ram) for l_ram in rams]
+        self.rams = [LogicRAM(phy_rams=phy_rams, optim=self.ILP_optim, mix=mix, **l_ram) for l_ram in rams]
         self.N_lutram = gp.quicksum([l_ram.N_lutram for l_ram in self.rams])
         self.N_brams = []
         for i in range(len(phy_rams.brams)):
@@ -59,9 +59,22 @@ class Circuit(object):
             p_ram_id, p_cfg = l_ram.get_final_cfg()
             if p_ram_id == len(self.phy_rams.brams):
                 N_lutram += p_cfg[-1]
-            else:
+                N_exlut += p_cfg[-2]
+            elif p_ram_id >= 0:
                 N_brams[p_ram_id] += p_cfg[-1]
-            N_exlut += p_cfg[-2]
+                N_exlut += p_cfg[-2]
+            else: # p_ram_id < 0 --> mix
+                base_id = p_cfg['base_id']
+                N_brams[base_id] += p_cfg['base'][-1]
+                for m in ['series', 'parallel']:
+                    if p_cfg[m] is None: continue
+                    m_id = p_cfg[m][0]
+                    if m_id < len(self.brams):
+                        N_brams[m_id] += p_cfg[m][-1]
+                    else:
+                        N_lutram += p_cfg[m][-1]
+                N_exlut += p_cfg['ex_lut']
+
         N_lb_taken = max(N_exlut//LB_SIZE + N_lutram + self.N_logic_lb, 
             *[self.phy_rams[i]['interval'] * N_brams[i] for i in range(len(N_brams))])
         # print(N_lutram, N_m8k, N_m128k, N_exlut, N_lb_taken)
@@ -78,13 +91,42 @@ class Circuit(object):
         if file_in: sys.stdout = file_in
         m_id = 0
         for l_ram in self.rams:
-            p_ram_id, (p, s, w, d, exlut, _) = l_ram.get_final_cfg()
-            cfg = f"{self.id} {l_ram.id} {exlut} LW {l_ram.width} LD {l_ram.depth} " + \
-                f"ID {m_id} S {s} P {p} Type {self.phy_rams[p_ram_id]['id']} " + \
-                f"Mode {MODE_List[l_ram.mode]} W {w} D {d}"
-
-            m_id += 1
-            print(cfg)
+            p_ram_id, p_cfg = l_ram.get_final_cfg()
+            if p_ram_id >= 0: 
+                (p, s, w, d, exlut, _) = p_cfg
+                cfg = f"{self.id} {l_ram.id} {exlut} LW {l_ram.width} LD {l_ram.depth} " + \
+                    f"ID {m_id} S {s} P {p} Type {self.phy_rams[p_ram_id]['id']} " + \
+                    f"Mode {MODE_List[l_ram.mode]} W {w} D {d}"
+                m_id += 1
+                print(cfg)
+            else: # mix
+                lw, ld = 0, 0
+                cfg = "" 
+                exlut = p_cfg['ex_lut']
+                if p_cfg['series'] is not None:
+                    cfg = cfg + f"{self.id} {l_ram.id} {exlut} LW {l_ram.width} LD {l_ram.depth} series"
+                    # LW 30 LD 8 ID 0 S 1 P 4 Type 1 Mode SinglePort W 20 D 32
+                    p_id, p, s, w, d, lw, ld, _ = p_cfg['series']
+                    cfg = cfg + f"\n    LW {lw} LD {ld} ID {m_id} S {s} P {p} Type {self.phy_rams[p_id]['id']} " + \
+                            f"Mode {MODE_List[l_ram.mode]} W {w} D {d}"
+                    m_id += 1
+                else:
+                    cfg = cfg + f"{self.id} {l_ram.id} {exlut} LW {l_ram.width} LD {l_ram.depth} parallel"
+                if p_cfg['parallel'] is not None:
+                    # LW 30 LD 8192 parallel
+                    if p_cfg['series'] is not None:
+                        cfg = cfg + f"\n    LW {l_ram.width - lw} LD {l_ram.depth - ld} parallel"
+                    for t in ['base', 'parallel']:
+                        p_id, p, s, w, d, lw, ld, _ = p_cfg[t]
+                        cfg = cfg + f"\n    LW {lw} LD {ld} ID {m_id} S {s} P {p} Type {self.phy_rams[p_id]['id']} " + \
+                                f"Mode {MODE_List[l_ram.mode]} W {w} D {d}"
+                        m_id += 1
+                else:
+                    p_id, p, s, w, d, lw, ld, _ = p_cfg['base']
+                    cfg = cfg + f"\n    LW {lw} LD {ld} ID {m_id} S {s} P {p} Type {self.phy_rams[p_id]['id']} " + \
+                            f"Mode {MODE_List[l_ram.mode]} W {w} D {d}"
+                    m_id += 1
+                print(cfg)
         sys.stdout = ori_stdout
             
 # test
@@ -92,7 +134,7 @@ if __name__ == '__main__':
     from parser import FPGA_cfg, PhyRAM_cfg
     cfg = FPGA_cfg('logical_rams.txt', 'logic_block_count.txt')
     p_rams = PhyRAM_cfg('physical_rams.yaml')
-    circuit = Circuit(phy_rams=p_rams, **cfg[0])
+    circuit = Circuit(phy_rams=p_rams, mix=True, **cfg[1])
     print(circuit.ILP_optim.ObjVal)
     print(circuit.get_area())
     f = open('mapping.txt', 'w')
