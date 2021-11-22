@@ -3,6 +3,7 @@ from parser import FPGA_cfg, PhyRAM_cfg
 from tqdm import tqdm
 import argparse
 import numpy as np
+import time
 
 geo_mean = lambda lst: np.exp(np.log(lst).mean())
 
@@ -22,6 +23,7 @@ if args.phy_ram is None:
     args.phy_ram = []
 
 if __name__ == '__main__':
+    t0 = time.time()
     fpga_cfg = FPGA_cfg(args.l_rams_path, args.lb_cnt_path)
     phy_rams = PhyRAM_cfg(args.phy_ram_cfg_path, args.phy_ram)
     assert len(phy_rams) > 0
@@ -34,4 +36,4 @@ if __name__ == '__main__':
         areas.append(circuit.ILP_optim.objVal) # areas.append(circuit.get_area()) 
     
     mapping_file.close()
-    print(f'geo mean: {geo_mean(areas)}')
+    print(f'runtime: {time.time() - t0} geo mean: {geo_mean(areas)}')
