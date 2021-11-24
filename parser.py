@@ -1,5 +1,3 @@
-from pickle import NONE
-from typing import List
 from vars import *
 import yaml
 import numpy as np
