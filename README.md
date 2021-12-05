@@ -2,6 +2,8 @@
 
 A FPGA CAD tool that maps the logic RAMs required by the circuit to the underlying physical RAMs for Stratix-IV-like architecture, aiming to have the circuit area on FPGA as small as possible.
 
+Detailed formulation and algorithm can be seen in this [report](./ram_mapper.pdf)
+
 ## Setup
 
 This mapper is written in Python, all you need is to configure the right python environment.
