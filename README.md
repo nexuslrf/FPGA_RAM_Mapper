@@ -8,7 +8,7 @@ Detailed formulation and algorithm can be seen in this [report](./ram_mapper.pdf
 
 This mapper is written in Python, all you need is to configure the right python environment.
 ```bash
-virtualenv --system-site-packages ./venv # using venv as an example
+virtualenv --system-site-packages ./venv --python=python3.7 # using venv as an example (you can also use other python3 env)
 ./venv/bin/activate # run proper activate according to your OS
 pip install -r requirements.txt
 ```
